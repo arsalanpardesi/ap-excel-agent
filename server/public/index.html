@@ -1,0 +1,407 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AP Excel Agent POC</title>
+
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/handsontable@14.5.0/dist/handsontable.full.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/hyperformula@2.6.0/dist/hyperformula.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/handsontable@14.5.0/dist/handsontable.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+  <style>
+    html, body { height: 100%; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 0; display: grid; grid-template-columns: 2fr 1fr; grid-template-rows: auto 1fr; height: 100vh; }
+    header { grid-column: 1 / span 2; padding: 0 14px; border-bottom: 1px solid #ddd; background: #f9fafb; }
+    #grid { overflow: hidden; padding: 0; }
+    #hot { height: 100%; }
+    #side { border-left: 1px solid #eee; display:flex; flex-direction: column; }
+    #chat { padding: 12px; gap: 8px; display:flex; flex-direction: column; border-bottom:1px solid #eee; }
+    #chat textarea { width: 100%; height: 80px; }
+    #actions { padding: 12px; overflow: auto; }
+    .pill { font-size: 12px; background: #f3f4f6; padding: 2px 6px; border-radius: 999px; display: inline-block; margin-right: 6px; }
+    #prov { padding: 12px; border-top:1px solid #eee; }
+    .hint-row { display:flex; gap:8px; flex-wrap: wrap; align-items: center; }
+    .hint-row input { padding: 4px 6px; }
+    .hint-row label { font-weight: 600; font-size: 12px; }
+    .pct { color:#065f46; font-weight:600; }
+    .cur { color:#1f2937; font-weight:600; }
+    #agentDebug { padding: 12px; border-top: 1px solid #eee; height: 220px; overflow: auto; background: #fafafa; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    #agentDebug pre { margin: 0; white-space: pre-wrap; word-break: break-word; }
+    #sheet-tabs-container { display:flex; gap:4px; align-items:center; flex-wrap:wrap; margin-top: 4px; border-top: 1px solid #ddd; padding-top: 4px; }
+    .sheet-tab { padding: 4px 10px; border:1px solid #e5e7eb; border-bottom:none; border-top-left-radius:6px; border-top-right-radius:6px; background:#f9fafb; cursor:pointer; }
+    .sheet-tab.active { background:#ffffff; border-bottom:1px solid #ffffff; font-weight: 600; position: relative; top: 1px; }
+    #ribbon-tabs { display: flex; gap: 4px; }
+    .ribbon-tab { padding: 6px 12px; border: none; background: none; cursor: pointer; font-size: 14px; margin-bottom: -1px; }
+    .ribbon-tab.active { border-bottom: 2px solid #1d6f42; font-weight: 600; }
+    #ribbon-content { padding: 8px 0; }
+    .ribbon-panel { display: none; gap: 2px; align-items: stretch; }
+    .ribbon-panel.active { display: flex; }
+    .ribbon-group { display: flex; flex-direction: column; align-items: center; padding: 0 12px; border-right: 1px solid #ddd; }
+    .ribbon-group .controls { display: flex; align-items: center; gap: 6px; flex-grow: 1; }
+    .ribbon-group .group-title { font-size: 11px; color: #555; margin-top: 4px; white-space: nowrap; }
+    .ribbon-group button, .ribbon-group input, .ribbon-group select { font-size: 12px; }
+    .ribbon-group .file-controls { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+    #modelSelector { padding: 4px; border-radius: 4px; border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+  <header>
+    <div id="ribbon">
+      <nav id="ribbon-tabs">
+        <button class="ribbon-tab active" data-target="home-panel">Home</button>
+        <button class="ribbon-tab" data-target="data-panel">Data</button>
+        <!-- New Agent Tab -->
+        <button class="ribbon-tab" data-target="agent-panel">Agent</button>
+      </nav>
+      <div id="ribbon-content">
+        <div id="home-panel" class="ribbon-panel active">
+          <div class="ribbon-group"><div class="controls"><button id="undo">Undo</button></div><span class="group-title">Clipboard</span></div>
+          <div class="ribbon-group"><div class="controls"><button id="addSheet">+ Sheet</button><button id="delSheet">Delete</button></div><span class="group-title">Sheets</span></div>
+          <div class="ribbon-group"><div class="controls"><button id="fmtPercent">%</button><button id="fmtCurrency">$</button><button id="fmtClear">Clear</button></div><span class="group-title">Number Format</span></div>
+        </div>
+        <div id="data-panel" class="ribbon-panel">
+          <div class="ribbon-group"><div class="controls file-controls"><label for="file" style="font-size:12px; font-weight:500;">Open File:</label><input type="file" id="file" accept="application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" /><button id="importFile" style="margin-top:4px;">Import Data</button></div><span class="group-title">Get External Data</span></div>
+          <div class="ribbon-group"><div class="controls"><button id="export">Export XLSX</button></div><span class="group-title">Export</span></div>
+        </div>
+        <!-- New Agent Panel for Model Selection -->
+        <div id="agent-panel" class="ribbon-panel">
+           <div class="ribbon-group">
+            <div class="controls">
+              <label for="modelSelector" style="font-size: 12px;">AI Model:</label>
+              <select id="modelSelector">
+                <option value="ollama" selected>Ollama</option>
+                <option value="gemini">Gemini Pro</option>
+              </select>
+            </div>
+            <span class="group-title">Model Selection</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- #tabs renamed for clarity -->
+    <nav id="sheet-tabs-container"></nav>
+  </header>
+
+  <main id="grid"><div id="hot"></div></main>
+
+  <aside id="side">
+    <div id="chat">
+      <label>Agent command:</label>
+      <textarea id="goal" placeholder="Example: calculate gross margin % on the P&L tab."></textarea>
+      <div class="hint-row">
+        <label for="sheetHint">Sheet hint:</label> <input id="sheetHint" type="text" placeholder="e.g., P&L" />
+        <label for="rowHint">Insert at row (1-based):</label> <input id="rowHint" type="number" min="1" placeholder="e.g., 25" />
+      </div>
+      <div style="display:flex; gap:8px;"> <button id="run">Run Agent (stream)</button> </div>
+    </div>
+    <div id="actions">
+      <div><span class="pill">Tip</span> Select a range and use the **Format** buttons for percent/currency, or ask the agent to calculate margins.</div>
+      <h3>Action history</h3><ul id="ev"></ul>
+    </div>
+    <div id="prov"><h3>Provenance</h3><div id="provBody">Click a cell to see provenance.</div></div>
+    <div id="agentDebug"><strong>Agent Debug (live)</strong><pre id="agentLog"></pre></div>
+  </aside>
+
+<script>
+const $ = (s, r=document) => r.querySelector(s);
+const evEl = $('#ev');
+const provEl = $('#provBody');
+const hotContainer = $('#hot');
+const tabsEl = $('#sheet-tabs-container');
+const logEl = $('#agentLog');
+
+let hot;               // Handsontable instance
+let currentSheetIndex = 0; // active sheet index
+let blockingSync = false;  // avoid echo on update
+
+// === Full-sheet look ===
+const DEFAULT_ROWS = 200;
+const DEFAULT_COLS = 50;
+
+function padAOA(data, rows = DEFAULT_ROWS, cols = DEFAULT_COLS) {
+  const out = Array.from({ length: rows }, (_, r) =>
+    Array.from({ length: cols }, (_, c) =>
+      (data[r] !== undefined && data[r][c] !== undefined) ? data[r][c] : null
+    )
+  );
+  return out;
+}
+
+function a1(colIndex, rowIndex) { // zero-based col,row -> A1
+  let n = colIndex + 1, s = '';
+  while (n > 0) { const rem = (n - 1) % 26; s = String.fromCharCode(65 + rem) + s; n = Math.floor((n - 1) / 26); }
+  return s + (rowIndex + 1);
+}
+
+async function fetchWB() { const r = await fetch('/api/workbook'); return r.json(); }
+
+function wbToAOA(sheet) {
+  const rows = sheet.rows || [];
+  const out = [];
+  for (let r=0; r<rows.length; r++) {
+    const row = rows[r];
+    const arr = [];
+    for (let c=0; c<row.length; c++) {
+      const cell = row[c] || { value: null };
+      arr.push(cell.formula ? cell.formula : (cell.value ?? null));
+    }
+    out.push(arr);
+  }
+  return out;
+}
+function wbToFormats(sheet) {
+  const rows = sheet.rows || [];
+  const out = [];
+  for (let r=0; r<rows.length; r++) {
+    const row = rows[r];
+    const arr = [];
+    for (let c=0; c<row.length; c++) {
+      const cell = row[c] || { format: null };
+      arr.push(cell.format ?? null);
+    }
+    out.push(arr);
+  }
+  return out;
+}
+
+function renderTabs(wb){
+  tabsEl.innerHTML = '';
+  wb.sheets.forEach((s, i) => {
+    const btn = document.createElement('button');
+    // Using sheet-tab class now
+    btn.className = 'sheet-tab' + (i===currentSheetIndex ? ' active' : '');
+    btn.textContent = s.name;
+    btn.onclick = () => { currentSheetIndex = i; refresh(); };
+    tabsEl.appendChild(btn);
+  });
+  // Prefill sheet hint with current sheet
+  const active = wb.sheets[currentSheetIndex] || wb.sheets[0];
+  if (active) $('#sheetHint').value = active.name;
+}
+
+let currentFormats = []; // 2D formats
+let lastSelection = { r1:0, c1:0, r2:0, c2:0 };
+
+// Format-aware renderer
+const BaseText = Handsontable.renderers.TextRenderer;
+function FormatAwareRenderer(instance, td, row, col, prop, value, cellProperties) {
+  BaseText.apply(this, arguments);
+  try {
+    const fmt = (currentFormats[row] && currentFormats[row][col]) || null;
+    const num = Number(value);
+    if (fmt === 'percent' && Number.isFinite(num)) {
+      td.textContent = num.toLocaleString(undefined, { style: 'percent', maximumFractionDigits: 2 });
+      td.classList.add('pct');
+    } else if (fmt === 'currency' && Number.isFinite(num)) {
+      td.textContent = num.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+      td.classList.add('cur');
+    }
+  } catch {}
+}
+
+async function refresh(){
+  const wb = await fetchWB();
+  renderTabs(wb);
+  const sheet = wb.sheets[currentSheetIndex] || wb.sheets[0];
+  const data = padAOA(wbToAOA(sheet));
+  currentFormats = padAOA(wbToFormats(sheet));
+  if (!hot) initGrid(data);
+  else { blockingSync = true; hot.updateSettings({ data }); blockingSync = false; }
+
+  evEl.innerHTML = '';
+  for (const e of wb.events.slice(-20).reverse()) {
+    const li = document.createElement('li');
+    li.textContent = new Date(e.ts).toLocaleTimeString() + ' – ' + e.summary;
+    evEl.appendChild(li);
+  }
+}
+
+function initGrid(data){
+  const hfEngine = HyperFormula.buildEmpty({ licenseKey: 'gpl-v3' });
+  hot = new Handsontable(hotContainer, {
+    data,
+    rowHeaders: true,
+    colHeaders: true,
+    width: '100%',
+    height: '100%',
+    stretchH: 'all',
+    contextMenu: true,
+    formulas: { engine: hfEngine },
+    licenseKey: 'non-commercial-and-evaluation',
+    cells: (row, col) => ({ renderer: FormatAwareRenderer }),
+    afterChange: async (changes, source) => {
+      if (!changes || source === 'loadData' || blockingSync) return;
+      const wb = await fetchWB();
+      const sheet = wb.sheets[currentSheetIndex] || wb.sheets[0];
+      for (const [row, prop, _oldVal, newVal] of changes) {
+        const col = typeof prop === 'number' ? prop : parseInt(prop, 10);
+        const v = newVal;
+        const isFormula = (typeof v === 'string') && /^\s*=/.test(v);
+        const op = isFormula ? 'setFormulas' : 'setValues';
+        const payload = isFormula ? { formulas: [[ v ]] } : { values: [[ (v === '' ? null : (isFinite(v) ? Number(v) : v)) ]] };
+        try {
+          await fetch('/api/sheetOps', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ op, args: { range: { sheet: sheet.name, r1: row, c1: col, r2: row, c2: col }, ...payload } })
+          });
+        } catch(e){ console.error(e); }
+      }
+      await refresh();
+    },
+    afterSelectionEnd: async (r1,c1,r2,c2) => {
+      lastSelection = { r1: Math.min(r1,r2), c1: Math.min(c1,c2), r2: Math.max(r1,r2), c2: Math.max(c1,c2) };
+      const wb = await fetchWB();
+      const sheet = wb.sheets[currentSheetIndex] || wb.sheets[0];
+      const cellRef = a1(c1, r1);
+      const r = await fetch(`/api/provenance?sheet=${encodeURIComponent(sheet.name)}&cell=${encodeURIComponent(cellRef)}`);
+      const d = await r.json();
+      if (!d.provenance || d.provenance.length===0) { provEl.textContent = `${sheet.name}!${cellRef}: (no provenance)`; return; }
+      provEl.innerHTML = `<div><strong>${sheet.name}!${cellRef}</strong></div>` +
+        d.provenance.map(p => `<div>• <em>${escapeHtml(p.docId)}</em> – ${escapeHtml(p.snippet||'')}
+          <small>${escapeHtml(p.rationale||'')}</small></div>`).join('');
+    }
+  });
+}
+
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m])); }
+
+// Sheet tab actions
+$('#addSheet').onclick = async () => {
+  const name = prompt('New sheet name:', 'Sheet' + Math.floor(Math.random()*100));
+  if (!name) return;
+  await fetch('/api/sheetOps', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ op:'createSheet', args:{ name } }) });
+  await refresh();
+};
+$('#delSheet').onclick = async () => {
+  const wb = await fetchWB();
+  if (wb.sheets.length <= 1) { alert('At least one sheet is required.'); return; }
+  const sheet = wb.sheets[currentSheetIndex];
+  if (!confirm(`Delete sheet "${sheet.name}"?`)) return;
+  await fetch('/api/sheetOps', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ op:'deleteSheet', args:{ name: sheet.name } }) });
+  currentSheetIndex = Math.max(0, currentSheetIndex-1);
+  await refresh();
+};
+
+// ** MODIFIED: Combined Import Logic is now in #importFile button **
+$('#importFile').onclick = async () => {
+  const file = document.getElementById('file').files[0];
+  if (!file) { alert('Please select a file first.'); return; }
+
+  if (file.type === 'application/pdf') {
+    const fd = new FormData(); fd.append('file', file);
+    const r = await fetch('/api/ingest-10k', { method:'POST', body: fd });
+    const d = await r.json();
+    if (!d.ok) { alert(d.error || 'PDF Ingestion failed'); return; }
+  } else if (file.name.endsWith('.xlsx')) {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const workbookJson = { sheets: [] };
+        workbook.SheetNames.forEach(sheetName => {
+          const ws = workbook.Sheets[sheetName];
+          const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+          const sheetData = { name: sheetName, rows: aoa.map(row => row.map(cellValue => ({ value: cellValue }))) };
+          workbookJson.sheets.push(sheetData);
+        });
+        await fetch('/api/import-xlsx', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(workbookJson) });
+        currentSheetIndex = 0;
+        await refresh();
+      } catch (err) { alert('Failed to parse XLSX file: ' + err.message); }
+    };
+    reader.readAsArrayBuffer(file);
+    return;
+  } else {
+    alert('Unsupported file type. Please select a PDF or XLSX file.');
+    return;
+  }
+  currentSheetIndex = 0;
+  await refresh();
+};
+
+
+$('#export').onclick = async () => {
+  const r = await fetch('/api/export-xlsx'); if (!r.ok) { alert('Export failed'); return; }
+  const blob = await r.blob(); const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'export.xlsx'; a.click();
+  URL.revokeObjectURL(url);
+};
+$('#undo').onclick = async () => { await fetch('/api/undo', { method:'POST' }); await refresh(); };
+
+// Formatting buttons
+$('#fmtPercent').onclick = async () => applyFormat('percent');
+$('#fmtCurrency').onclick = async () => applyFormat('currency');
+$('#fmtClear').onclick = async () => applyFormat(null);
+async function applyFormat(fmt) {
+  const wb = await fetchWB();
+  const sheet = wb.sheets[currentSheetIndex] || wb.sheets[0];
+  await fetch('/api/sheetOps', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ op:'formatRange', args:{ range: { sheet: sheet.name, ...lastSelection }, format: fmt } })
+  });
+  await refresh();
+}
+
+// 'Run Agent' logic includes the selected model
+$('#run').onclick = async () => {
+  const goal = $('#goal').value.trim(); if (!goal) return;
+  const wb = await fetchWB();
+  const active = wb.sheets[currentSheetIndex] || wb.sheets[0];
+  const sheetHint = ($('#sheetHint').value || '').trim() || (active ? active.name : '');
+  const rowHintStr = ($('#rowHint').value || '').trim();
+  const insertRow = rowHintStr ? Number(rowHintStr) : undefined;
+  // Get the selected model from the dropdown
+  const model = $('#modelSelector').value;
+  startAgentStream({ goal, sheetHint, insertRow, model });
+};
+
+function appendLog(line) {
+  logEl.textContent += line;
+  logEl.parentElement.scrollTop = logEl.parentElement.scrollHeight;
+}
+
+function pretty(objOrStr) {
+  try { const o = (typeof objOrStr === 'string') ? JSON.parse(objOrStr) : objOrStr; return JSON.stringify(o, null, 2); }
+  catch { return String(objOrStr); }
+}
+
+// startAgentStream takes 'model' as a parameter
+function startAgentStream({ goal, sheetHint, insertRow, model }) {
+  logEl.textContent = '';
+  // Pass the selected model to the API
+  const url = `/api/agent/stream?model=${model}&goal=${encodeURIComponent(goal)}&sheetHint=${encodeURIComponent(sheetHint || '')}&insertRow=${encodeURIComponent(insertRow || '')}`;
+  const es = new EventSource(url);
+
+  es.addEventListener('context', (e) => appendLog(`\n[context]\n${pretty(e.data)}\n`));
+  es.addEventListener('status',  (e) => appendLog(`\n[status] ${JSON.parse(e.data)}`));
+  es.addEventListener('token',   (e) => appendLog(String(JSON.parse(e.data))));
+  es.addEventListener('error',   (e) => { appendLog(`\n[error] ${e.data}`); es.close(); });
+  es.addEventListener('done',    async (_e) => { appendLog(`\n[done]`); es.close(); await refresh(); });
+
+  es.onerror = (_e) => { appendLog(`\n[stream error]`); es.close(); };
+}
+
+// Ribbon Tab Interactivity
+document.addEventListener('DOMContentLoaded', () => {
+  const tabs = document.querySelectorAll('.ribbon-tab');
+  const panels = document.querySelectorAll('.ribbon-panel');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      panels.forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      const targetPanelId = tab.getAttribute('data-target');
+      document.getElementById(targetPanelId)?.classList.add('active');
+    });
+  });
+});
+
+refresh();
+</script>
+</body>
+</html>
